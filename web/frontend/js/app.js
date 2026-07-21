@@ -23,7 +23,8 @@ async function loadData() {
         await Promise.all([
             loadStatus(),
             loadHistory(),
-            loadStats()
+            loadStats(),
+            loadSettings()
         ]);
     } catch (error) {
         console.error('Error loading data:', error);
@@ -44,36 +45,79 @@ async function loadStatus() {
             badge.className = 'status-badge paused';
             statusText.textContent = 'Paused';
             document.getElementById('pauseBtn').style.display = 'none';
-            document.getElementById('resumeBtn').style.display = 'inline-block';
+            document.getElementById('resumeBtn').style.display = 'inline-flex';
         } else {
             badge.className = 'status-badge running';
             statusText.textContent = 'Running';
-            document.getElementById('pauseBtn').style.display = 'inline-block';
+            document.getElementById('pauseBtn').style.display = 'inline-flex';
             document.getElementById('resumeBtn').style.display = 'none';
         }
 
         // Update next commit countdown
         if (data.next_commit_in !== null && data.next_commit_in !== undefined) {
             const minutes = Math.floor(data.next_commit_in / 60);
-            const seconds = data.next_commit_in % 60;
+            const seconds = Math.floor(data.next_commit_in % 60);
             document.getElementById('nextCommit').textContent =
-                `${minutes}m ${seconds}s`;
+                `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
         } else {
             document.getElementById('nextCommit').textContent = '--:--';
         }
 
         // Update theme
-        document.getElementById('currentTheme').textContent = data.current_theme || 'None';
+        const theme = data.current_theme || 'No theme';
+        document.getElementById('currentTheme').textContent = theme;
+        document.getElementById('currentTheme').title = theme;
 
         // Update Ollama status
-        document.getElementById('ollamaStatus').textContent =
-            data.ollama_available ? '✅ Available' : '❌ Unavailable';
+        const ollamaEl = document.getElementById('ollamaStatus');
+        if (data.ollama_available) {
+            ollamaEl.textContent = 'Available';
+            ollamaEl.className = 'value success';
+        } else {
+            ollamaEl.textContent = 'Unavailable';
+            ollamaEl.className = 'value error';
+        }
 
         // Update repo info
         if (data.repository) {
-            const repoName = data.repository.split('/').pop();
+            const repoName = data.remote_url
+                ? data.remote_url.replace('https://github.com/', '').replace('.git', '')
+                : data.repository.split('/').pop();
             document.getElementById('repoPath').textContent = repoName;
-            document.getElementById('repoBranch').textContent = data.branch || 'main';
+            document.getElementById('repoBranch').textContent = data.branch || 'master';
+            const urlEl = document.getElementById('repoUrl');
+            if (urlEl && data.remote_url) {
+                urlEl.href = data.remote_url.replace('.git', '');
+            }
+        }
+
+        // Update push health
+        const ps = data.push_status;
+        if (ps) {
+            const pushEl = document.getElementById('pushStatus');
+            const alertEl = document.getElementById('pushAlert');
+            const alertText = document.getElementById('pushAlertText');
+            const failRow = document.getElementById('pushFailRow');
+            const failCount = document.getElementById('pushFailCount');
+
+            if (!ps.enabled) {
+                pushEl.textContent = 'Disabled';
+                pushEl.className = 'value';
+            } else if (ps.healthy) {
+                pushEl.textContent = 'Healthy';
+                pushEl.className = 'value success';
+                alertEl.classList.add('hidden');
+                if (failRow) failRow.style.display = 'none';
+            } else {
+                pushEl.textContent = 'Failing';
+                pushEl.className = 'value error';
+                alertEl.classList.remove('hidden');
+                alertText.textContent = `Push failures: ${ps.failed_recent} of last 10 commits did not reach GitHub. Check your token and branch config.`;
+                if (failRow) {
+                    failRow.style.display = '';
+                    failCount.textContent = `${ps.failed_recent} / 10 recent`;
+                }
+            }
         }
 
     } catch (error) {
@@ -92,11 +136,16 @@ async function loadHistory() {
 
         commitCount.textContent = data.total;
 
-        if (data.commits.length === 0) {
+        if (!data.commits || data.commits.length === 0) {
             commitList.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">📝</div>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="4"></circle>
+                        <line x1="1.05" y1="12" x2="7" y2="12"></line>
+                        <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+                    </svg>
                     <div>No commits yet</div>
+                    <div style="font-size: 12px; margin-top: 8px;">Waiting for first scheduled commit...</div>
                 </div>
             `;
             return;
@@ -112,13 +161,36 @@ async function loadHistory() {
                     <div class="commit-message">
                         ${icon}
                         <span class="badge ${type}">${type}</span>
-                        ${escapeHtml(commit.message)}
+                        <span>${escapeHtml(commit.message)}</span>
                     </div>
                     <div class="commit-meta">
-                        <span>🕐 ${timeAgo}</span>
-                        <span>📄 ${commit.files_changed} file${commit.files_changed !== 1 ? 's' : ''}</span>
-                        <span>🔖 ${commit.hash.substring(0, 7)}</span>
-                        ${commit.theme ? `<span>🏷️ ${commit.theme}</span>` : ''}
+                        <span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                            ${timeAgo}
+                        </span>
+                        <span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                                <polyline points="13 2 13 9 20 9"></polyline>
+                            </svg>
+                            ${commit.files_changed} file${commit.files_changed !== 1 ? 's' : ''}
+                        </span>
+                        <span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="4"></circle>
+                                <line x1="1.05" y1="12" x2="7" y2="12"></line>
+                                <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+                            </svg>
+                            ${commit.hash.substring(0, 7)}
+                        </span>
+                        <span class="push-badge ${commit.push_success ? 'pushed' : 'push-failed'}">
+                            ${commit.push_success
+                                ? '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> pushed'
+                                : '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg> not pushed'}
+                        </span>
                     </div>
                 </div>
             `;
@@ -128,6 +200,11 @@ async function loadHistory() {
         console.error('Error loading history:', error);
         document.getElementById('commitList').innerHTML = `
             <div class="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
                 <div>Error loading commits</div>
             </div>
         `;
@@ -141,8 +218,8 @@ async function loadStats() {
         const data = await response.json();
 
         document.getElementById('totalCommits').textContent = data.total_commits;
-        document.getElementById('successRate').textContent = `${data.success_rate}%`;
-        document.getElementById('aiUsage').textContent = `${data.ollama_usage_rate}%`;
+        document.getElementById('successRate').textContent = `${Math.round(data.success_rate)}%`;
+        document.getElementById('aiUsage').textContent = `${Math.round(data.ollama_usage_rate)}%`;
         document.getElementById('commits24h').textContent = data.commits_last_24h;
 
     } catch (error) {
@@ -196,7 +273,7 @@ async function triggerCommit() {
         });
 
         if (response.ok) {
-            showNotification('Commit triggered! Check commits in a moment...', 'success');
+            showNotification('Commit triggered!', 'success');
             setTimeout(() => loadData(), 2000);
         }
     } catch (error) {
@@ -206,7 +283,7 @@ async function triggerCommit() {
 }
 
 function refreshData() {
-    showNotification('Refreshing data...', 'info');
+    showNotification('Refreshing...', 'info');
     loadData();
 }
 
@@ -221,9 +298,31 @@ function extractCommitType(message) {
 }
 
 function getCommitIcon(success, usedOllama) {
-    if (!success) return '❌';
-    if (usedOllama) return '🤖';
-    return '✅';
+    if (!success) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+        </svg>`;
+    }
+    if (usedOllama) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect>
+            <rect x="9" y="9" width="6" height="6"></rect>
+            <line x1="9" y1="1" x2="9" y2="4"></line>
+            <line x1="15" y1="1" x2="15" y2="4"></line>
+            <line x1="9" y1="20" x2="9" y2="23"></line>
+            <line x1="15" y1="20" x2="15" y2="23"></line>
+            <line x1="20" y1="9" x2="23" y2="9"></line>
+            <line x1="20" y1="14" x2="23" y2="14"></line>
+            <line x1="1" y1="9" x2="4" y2="9"></line>
+            <line x1="1" y1="14" x2="4" y2="14"></line>
+        </svg>`;
+    }
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+    </svg>`;
 }
 
 function formatTimeAgo(timestamp) {
@@ -244,15 +343,66 @@ function escapeHtml(text) {
 }
 
 function showNotification(message, type = 'info') {
-    // Simple console notification for now
     console.log(`[${type.toUpperCase()}] ${message}`);
 
-    // You could implement a toast notification here
-    // For now, we'll just show an alert for errors
-    if (type === 'error') {
-        alert(message);
+    // Create toast notification
+    const existing = document.querySelector('.toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        padding: 14px 20px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 1000;
+        animation: slideIn 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: 'Outfit', sans-serif;
+    `;
+
+    if (type === 'success') {
+        toast.style.background = 'rgba(34, 197, 94, 0.15)';
+        toast.style.color = '#22c55e';
+        toast.style.border = '1px solid rgba(34, 197, 94, 0.3)';
+    } else if (type === 'error') {
+        toast.style.background = 'rgba(239, 68, 68, 0.15)';
+        toast.style.color = '#ef4444';
+        toast.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+    } else {
+        toast.style.background = 'rgba(139, 92, 246, 0.15)';
+        toast.style.color = '#8b5cf6';
+        toast.style.border = '1px solid rgba(139, 92, 246, 0.3)';
     }
+
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
 }
+
+// Add animation styles
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    @keyframes slideOut {
+        from { transform: translateX(0); opacity: 1; }
+        to { transform: translateX(100%); opacity: 0; }
+    }
+`;
+document.head.appendChild(style);
 
 // Handle visibility change - pause refresh when tab is hidden
 document.addEventListener('visibilitychange', () => {
@@ -268,3 +418,306 @@ document.addEventListener('visibilitychange', () => {
         }
     }
 });
+
+// Settings / Token Management
+async function loadSettings() {
+    try {
+        const response = await fetch(`${API_BASE}/api/settings`);
+        const data = await response.json();
+
+        const tokenStatusText = document.getElementById('tokenStatusText');
+        const tokenInputGroup = document.getElementById('tokenInputGroup');
+        const tokenActions = document.getElementById('tokenActions');
+        const pushStatus = document.getElementById('pushStatus');
+
+        if (data.has_github_token) {
+            tokenStatusText.textContent = 'Configured';
+            tokenStatusText.className = 'value success';
+            tokenInputGroup.style.display = 'none';
+            tokenActions.style.display = 'flex';
+
+            if (!data.push_enabled) {
+                pushStatus.textContent = 'Auth Error';
+                pushStatus.className = 'value error';
+            }
+            // actual health state is set by loadStatus via push_status field
+        } else {
+            tokenStatusText.textContent = 'Not configured';
+            tokenStatusText.className = 'value error';
+            tokenInputGroup.style.display = 'flex';
+            tokenActions.style.display = 'none';
+            pushStatus.textContent = 'Disabled';
+            pushStatus.className = 'value error';
+        }
+
+        // Pre-populate branch and repo URL fields
+        if (data.branch) {
+            const bi = document.getElementById('branchInput');
+            if (bi && !bi.dataset.dirty) bi.value = data.branch;
+        }
+        if (data.remote_url) {
+            const ri = document.getElementById('repoUrlInput');
+            if (ri && !ri.dataset.dirty) ri.value = data.remote_url.replace('.git', '');
+        }
+
+        // Re-initialize feather icons for new elements
+        if (typeof feather !== 'undefined') {
+            feather.replace();
+        }
+
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+
+    // Load Ollama config
+    try {
+        const ores = await fetch(`${API_BASE}/api/settings/ollama`);
+        if (ores.ok) {
+            const ocfg = await ores.json();
+            const fields = { ollamaUrl: 'url', ollamaModel: 'model', ollamaTheme: 'theme', ollamaSystemPrompt: 'system_prompt' };
+            for (const [id, key] of Object.entries(fields)) {
+                const el = document.getElementById(id);
+                if (el && ocfg[key] !== undefined && !el.dataset.dirty) el.value = ocfg[key];
+            }
+        }
+    } catch (e) {
+        console.error('Error loading Ollama config:', e);
+    }
+}
+
+async function saveRepoCfg() {
+    const branch = document.getElementById('branchInput').value.trim();
+    const repoUrl = document.getElementById('repoUrlInput').value.trim();
+    const statusEl = document.getElementById('repoCfgStatus');
+
+    if (!branch && !repoUrl) {
+        statusEl.textContent = 'Enter a branch or repo URL to save.';
+        statusEl.style.color = '#f59e0b';
+        return;
+    }
+
+    statusEl.textContent = 'Saving...';
+    statusEl.style.color = '#525252';
+
+    try {
+        const body = {};
+        if (branch) body.branch = branch;
+        if (repoUrl) body.remote_url = repoUrl;
+
+        const res = await fetch(`${API_BASE}/api/settings/repo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+
+        if (res.ok && data.status === 'success') {
+            statusEl.textContent = 'Saved. Changes are live.';
+            statusEl.style.color = '#10b981';
+            // mark fields as no longer dirty so loadSettings can refresh them
+            document.getElementById('branchInput').dataset.dirty = '';
+            document.getElementById('repoUrlInput').dataset.dirty = '';
+            await loadData();
+        } else {
+            statusEl.textContent = JSON.stringify(data.results || data.detail);
+            statusEl.style.color = '#ef4444';
+        }
+    } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = '#ef4444';
+    }
+}
+
+async function testToken() {
+    const tokenInput = document.getElementById('tokenInput');
+    if (!tokenInput) {
+        alert('Token input not found');
+        return;
+    }
+
+    const token = tokenInput.value.trim();
+
+    if (!token) {
+        showNotification('Please enter a token first', 'error');
+        return;
+    }
+
+    showNotification('Testing token...', 'info');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/settings/test-token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token })
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            showNotification('Token is valid! Click Save to use it.', 'success');
+        } else {
+            showNotification(data.message || 'Token test failed', 'error');
+        }
+    } catch (error) {
+        console.error('Error testing token:', error);
+        showNotification('Failed to test token', 'error');
+    }
+}
+
+async function saveToken() {
+    const tokenInput = document.getElementById('tokenInput');
+    const token = tokenInput.value.trim();
+
+    if (!token) {
+        showNotification('Please enter a token', 'error');
+        return;
+    }
+
+    // Warn on unrecognised prefixes but never hard-block: GitHub adds new
+    // token formats (ghp_, github_pat_, gho_, ghs_...) and a silent client-side
+    // reject looks identical to a successful save from the user's side.
+    if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+        if (!confirm('Token does not start with ghp_ or github_pat_ — save anyway?')) {
+            return;
+        }
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/api/settings/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showNotification('Token saved successfully', 'success');
+            tokenInput.value = '';
+            loadSettings();
+        } else {
+            showNotification(data.detail || 'Failed to save token', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving token:', error);
+        showNotification('Failed to save token', 'error');
+    }
+}
+
+async function removeToken() {
+    if (!confirm('Remove GitHub token? Push will be disabled.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/api/settings/token`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            showNotification('Token removed', 'success');
+            loadSettings();
+        } else {
+            showNotification('Failed to remove token', 'error');
+        }
+    } catch (error) {
+        console.error('Error removing token:', error);
+        showNotification('Failed to remove token', 'error');
+    }
+}
+
+async function testPush() {
+    showNotification('Testing connection...', 'info');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/settings/test-push`, {
+            method: 'POST'
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            showNotification('Connection successful!', 'success');
+        } else {
+            showNotification(data.message || 'Connection failed', 'error');
+        }
+
+        loadSettings();
+    } catch (error) {
+        console.error('Error testing push:', error);
+        showNotification('Connection test failed', 'error');
+    }
+}
+
+function showUpdateToken() {
+    // Show the input group to allow updating the token
+    const tokenInputGroup = document.getElementById('tokenInputGroup');
+    const tokenActions = document.getElementById('tokenActions');
+    const tokenInput = document.getElementById('tokenInput');
+
+    tokenInputGroup.style.display = 'flex';
+    tokenActions.style.display = 'none';
+    tokenInput.value = '';
+    tokenInput.placeholder = 'Enter new token...';
+    tokenInput.focus();
+
+    // Re-initialize feather icons
+    if (typeof feather !== 'undefined') {
+        feather.replace();
+    }
+}
+
+async function saveOllamaConfig() {
+    const statusEl = document.getElementById('ollamaStatus');
+    const body = {};
+    const url = document.getElementById('ollamaUrl').value.trim();
+    const model = document.getElementById('ollamaModel').value.trim();
+    const theme = document.getElementById('ollamaTheme').value.trim();
+    const prompt = document.getElementById('ollamaSystemPrompt').value.trim();
+    if (url) body.url = url;
+    if (model) body.model = model;
+    if (theme !== undefined) body.theme = theme;
+    if (prompt !== undefined) body.system_prompt = prompt;
+
+    statusEl.textContent = 'Saving...';
+    statusEl.style.color = '#525252';
+    try {
+        const res = await fetch(`${API_BASE}/api/settings/ollama`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+            statusEl.textContent = 'Saved and applied live.';
+            statusEl.style.color = '#10b981';
+        } else {
+            statusEl.textContent = data.detail || 'Save failed';
+            statusEl.style.color = '#ef4444';
+        }
+    } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = '#ef4444';
+    }
+}
+
+async function testOllama() {
+    const statusEl = document.getElementById('ollamaStatus');
+    statusEl.textContent = 'Testing...';
+    statusEl.style.color = '#525252';
+    try {
+        const res = await fetch(`${API_BASE}/api/settings/ollama/test`, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'success') {
+            const models = data.models && data.models.length ? ` Models: ${data.models.join(', ')}` : '';
+            statusEl.textContent = `Connected.${models}`;
+            statusEl.style.color = '#10b981';
+        } else {
+            statusEl.textContent = data.message || 'Not reachable';
+            statusEl.style.color = '#ef4444';
+        }
+    } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = '#ef4444';
+    }
+}

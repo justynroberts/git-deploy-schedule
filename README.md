@@ -1,336 +1,220 @@
-# Git Deploy Schedule
+# git-deploy-schedule
 
-Automated git commit scheduler with AI-powered commit messages using Ollama.
+Automated git commit scheduler with AI-generated commit messages. Commits randomised sample files to a target repository at configurable intervals using a local Ollama model — no external AI API required.
 
-## Overview
+A web dashboard lets you monitor activity, manage credentials, and trigger commits on demand.
 
-This tool automatically commits and pushes changes to a git repository at randomized intervals (default: 10 minutes ± 50 seconds). It uses Ollama to generate contextual, realistic commit messages based on actual file changes, falling back to template-based messages when Ollama is unavailable.
+---
 
-## Features
+## How it works
 
-- 🤖 **AI-Powered Commit Messages**: Uses Ollama to generate meaningful commit messages based on git diffs
-- ⏱️ **Randomized Scheduling**: Commits at configurable intervals with random jitter
-- 🔄 **Automatic Fallback**: Falls back to template messages if Ollama is unavailable
-- 🐳 **Docker Ready**: Fully containerized with docker-compose support
-- 📝 **Conventional Commits**: Follows conventional commit format (feat, fix, chore, etc.)
-- 🔧 **Highly Configurable**: YAML configuration with environment variable overrides
-- 📊 **Comprehensive Logging**: Detailed logs for monitoring and debugging
+1. On each cycle (default 10 min ± 50 s jitter) the scheduler generates 1–3 random YAML files (travel destinations or Kubernetes manifests) in the target repo
+2. Ollama generates a conventional commit message from the diff (`feat`, `fix`, `chore`, etc.)
+3. The commit is pushed to GitHub via a stored PAT
+4. Everything is tracked in SQLite and surfaced in the web UI
 
-## Requirements
+---
 
-- Python 3.11+
-- Git repository
-- Ollama (optional, for AI-generated messages)
-- Docker & Docker Compose (for containerized deployment)
+## Quick start (Docker)
 
-## Installation
-
-### Local Installation
-
-1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/justynroberts/git-deploy-schedule.git
 cd git-deploy-schedule
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Copy and configure the environment file:
-```bash
 cp .env.example .env
-# Edit .env with your settings
 ```
 
-4. Configure the scheduler:
-```bash
-# Edit config/config.yaml with your repository path and preferences
+Edit `.env`:
+
+```env
+REPO_REMOTE_URL=https://github.com/your-org/your-repo.git
+REPO_BRANCH=main
+OLLAMA_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=llama3.2:3b
 ```
 
-### Docker Installation
-
-1. Configure your repository path in `.env`:
-```bash
-echo "REPO_PATH=/path/to/your/repo" > .env
-```
-
-2. Build and run with docker-compose:
 ```bash
 docker-compose up -d
 ```
 
+Open **http://localhost:5001** — paste a GitHub PAT in Settings → GitHub Token → Save.
+
+---
+
+## Requirements
+
+| Dependency | Notes |
+|---|---|
+| Docker + Docker Compose | Primary deployment method |
+| Ollama | Run locally; any model works (`llama3.2:3b` recommended) |
+| GitHub PAT | `repo` scope (classic) or Contents: Write (fine-grained) |
+
+---
+
 ## Configuration
 
-### YAML Configuration (`config/config.yaml`)
+### `config/config.yaml`
 
 ```yaml
 repositories:
-  - path: /path/to/repo
+  - path: /repo          # mounted inside container
     branch: main
     enabled: true
 
 schedule:
-  base_interval: 600  # 10 minutes
-  jitter_range: 50    # ±50 seconds
+  base_interval: 600     # seconds between commits
+  jitter_range: 50       # ± seconds of randomness
 
 ollama:
   enabled: true
-  url: http://oracle.local:11434
-  model: llama3.2:latest
+  url: http://host.docker.internal:11434
+  model: llama3.2:3b
   timeout: 30
-  max_tokens: 100
-  theme: "kubernetes"  # Optional: kubernetes, docker, terraform, aws, etc.
+  theme: "Kubernetes microservices platform"   # shapes commit message context
 
 commit:
   use_ollama: true
-  message_template: "chore: automated update - {timestamp}"
-  author_name: "Auto Deploy Bot"
-  author_email: "bot@example.com"
 
 push:
-  enabled: false  # Set to true to push to remote
+  enabled: true
   retry_attempts: 3
   retry_delay: 30
-```
 
-### Environment Variables
-
-Override configuration via environment variables:
-
-- `REPO_PATH`: Repository path
-- `OLLAMA_URL`: Ollama API URL
-- `OLLAMA_MODEL`: Ollama model name
-- `OLLAMA_THEME`: Commit message theme (e.g., "kubernetes", "docker")
-- `BASE_INTERVAL`: Base interval in seconds
-- `JITTER_RANGE`: Jitter range in seconds
-- `GIT_AUTHOR_NAME`: Git author name
-- `GIT_AUTHOR_EMAIL`: Git author email
-
-## Usage
-
-### Run Continuously
-
-```bash
-python main.py
-```
-
-### Run Once (for testing)
-
-```bash
-python main.py --once
-```
-
-### Check Status
-
-```bash
-python main.py --status
-```
-
-### Custom Configuration
-
-```bash
-python main.py --config /path/to/config.yaml
-```
-
-### Docker Usage
-
-```bash
-# Run in background
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Run once
-docker-compose run git-scheduler python main.py --once
-
-# Check status
-docker-compose run git-scheduler python main.py --status
-
-# Stop
-docker-compose down
-```
-
-## Ollama Setup
-
-1. Install Ollama: https://ollama.ai
-
-2. Pull a model:
-```bash
-ollama pull llama3.2
-# or
-ollama pull codellama
-```
-
-3. Ensure Ollama is running:
-```bash
-ollama serve
-```
-
-4. Configure the Ollama URL in `config/config.yaml` or via `OLLAMA_URL` environment variable.
-
-## Commit Message Examples
-
-### Ollama-Generated (AI)
-
-**Without Theme:**
-- `feat: implement JWT token validation and refresh mechanism`
-- `fix: resolve race condition in concurrent file uploads`
-- `refactor: simplify error handling in authentication module`
-
-**With Kubernetes Theme:**
-- `feat: add kubernetes theme support and configuration`
-- `fix: resolve pod scheduling issue in production cluster`
-- `chore: update helm chart values for autoscaling`
-- `docs: add deployment guide for kubernetes ingress`
-
-### Template-Based (Fallback)
-- `chore: automated update - 2025-10-23 14:23:45`
-- `feat: automated changes - 2025-10-23 14:33:52`
-- `fix: automated changes - 2025-10-23 14:44:01`
-
-## Testing
-
-Run the test suite:
-
-```bash
-# Install test dependencies
-pip install pytest pytest-cov
-
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Run specific test file
-pytest tests/test_config.py
-```
-
-## Project Structure
-
-```
-git-deploy-schedule/
-├── src/
-│   ├── scheduler.py          # Main scheduling logic
-│   ├── git_operations.py     # Git command wrapper
-│   ├── ollama_client.py      # Ollama API integration
-│   ├── message_generator.py  # Commit message generation
-│   └── config.py             # Configuration loader
-├── tests/
-│   ├── test_config.py
-│   ├── test_ollama_client.py
-│   └── test_message_generator.py
-├── config/
-│   └── config.yaml           # Configuration file
-├── logs/
-│   └── scheduler.log         # Application logs
-├── main.py                   # Entry point
-├── requirements.txt          # Python dependencies
-├── Dockerfile                # Docker image definition
-└── docker-compose.yml        # Docker Compose configuration
-```
-
-## Development Commands
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run tests
-pytest
-
-# Run with custom config
-python main.py --config config/config.yaml
-
-# Run once for testing
-python main.py --once
-
-# Check scheduler status
-python main.py --status
-```
-
-## Logging
-
-Logs are written to both console and file (`logs/scheduler.log` by default).
-
-Log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
-
-Configure via `config/config.yaml`:
-```yaml
 logging:
   level: INFO
   file: logs/scheduler.log
 ```
 
-## Git Authentication
+### Environment overrides (`docker-compose.yml` or `.env`)
 
-To push commits to a remote repository, you need to configure git authentication.
+| Variable | Default | Description |
+|---|---|---|
+| `REPO_REMOTE_URL` | — | Remote to clone and push to |
+| `REPO_BRANCH` | `main` | Branch to commit on |
+| `OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama endpoint |
+| `OLLAMA_MODEL` | `llama3.2:3b` | Model for commit messages |
+| `LOG_LEVEL` | `INFO` | Log verbosity |
+| `GITHUB_TOKEN` | — | Optional: PAT passed at container start |
 
-### Quick Setup (PAT Token)
+---
 
-1. **Create Personal Access Token** on GitHub/GitLab
-2. **Configure git credential helper:**
-   ```bash
-   git config --global credential.helper osxkeychain  # macOS
-   git config --global credential.helper store        # Linux
-   ```
-3. **Set remote URL with username:**
-   ```bash
-   git remote add origin https://YOUR_USERNAME@github.com/user/repo.git
-   ```
-4. **Enable push in config:**
-   ```yaml
-   push:
-     enabled: true
-   ```
-5. **Test:** When you push, enter your PAT token when prompted
+## Web UI
 
-See [GIT_AUTH.md](GIT_AUTH.md) for detailed authentication options including SSH keys, Docker setup, and security best practices.
+Port **5001** (configurable).
 
-## Troubleshooting
+- **Dashboard** — live countdown to next commit, last commit, push health
+- **Commit history** — every commit with push status badge
+- **Controls** — pause / resume / trigger now
+- **Settings** — PAT management, branch, remote URL (all persisted in SQLite)
 
-### Ollama Connection Issues
-- Ensure Ollama is running: `curl http://oracle.local:11434/api/tags`
-- Check firewall settings
-- Verify URL in configuration
-- Check logs for connection errors
+---
 
-### Git Authentication Issues
-- **PAT Token**: Use git credential helper to store token securely
-- **For SSH**: Ensure SSH keys are configured and added to ssh-agent
-- **For HTTPS**: Configure git credentials with `git config credential.helper`
-- **Docker**: Mount SSH keys or git-credentials file as volumes
-- See [GIT_AUTH.md](GIT_AUTH.md) for complete authentication guide
+## GitHub Actions + PagerDuty change integration
 
-### No Changes to Commit
-- The scheduler only commits when there are file changes
-- Use `--once` mode to test without waiting
-- Check git status in the repository
+Create `.github/workflows/pagerduty-change.yml` in the **target repository**:
 
-### Permission Errors
-- Ensure the repository path is accessible
-- Check file permissions
-- Docker: Verify volume mounts
+```yaml
+name: PagerDuty Change Event
 
-## Security Considerations
+on:
+  push:
+    branches: [main, master]
 
-- Never commit sensitive files (.env, credentials, keys)
-- Use `.gitignore` to exclude sensitive data
-- Configure git authentication securely (SSH keys, credential helpers)
-- Review Ollama-generated messages before enabling push
-- Use separate git user for automated commits
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Send change event to PagerDuty
+        env:
+          PD_ROUTING_KEY: ${{ secrets.PD_CHANGE_INTEGRATION_KEY }}
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          COMMIT_MSG=$(git log -1 --pretty=%s)
+          AUTHOR=$(git log -1 --pretty=%an)
+          REPO="${{ github.repository }}"
+          RUN_URL="https://github.com/${REPO}/commit/${COMMIT_SHA}"
+
+          curl -s --fail -X POST https://events.pagerduty.com/v2/change/enqueue \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"routing_key\": \"${PD_ROUTING_KEY}\",
+              \"payload\": {
+                \"summary\": \"${COMMIT_MSG}\",
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+                \"source\": \"github-actions\",
+                \"custom_details\": {
+                  \"repository\": \"${REPO}\",
+                  \"commit\": \"${COMMIT_SHA:0:7}\",
+                  \"author\": \"${AUTHOR}\",
+                  \"compare_url\": \"${RUN_URL}\"
+                }
+              },
+              \"links\": [{
+                \"href\": \"${RUN_URL}\",
+                \"text\": \"View commit\"
+              }]
+            }"
+```
+
+### Setup
+
+1. In PagerDuty: **Service** → **Integrations** → **Add integration** → choose **Change Events API** → copy the **Integration Key**
+2. In GitHub: **Settings** → **Secrets and variables** → **Actions** → add `PD_CHANGE_INTEGRATION_KEY`
+3. Commit the workflow file to your target repo
+
+Every push from the scheduler will create a change event visible in PagerDuty's Recent Changes timeline — useful for correlating deploys with incidents.
+
+---
+
+## Project structure
+
+```
+git-deploy-schedule/
+├── src/
+│   ├── scheduler.py          # Orchestrates commit cycles
+│   ├── git_operations.py     # Git wrapper (stage / commit / push)
+│   ├── file_generator.py     # Generates random YAML sample files
+│   ├── ollama_client.py      # Ollama API client
+│   ├── message_generator.py  # Commit message generation + fallback
+│   ├── database.py           # SQLite: commits, stats, settings
+│   ├── api.py                # FastAPI REST API
+│   └── config.py             # YAML + env config loader
+├── web/frontend/             # Dashboard (HTML/CSS/JS)
+├── config/config.yaml        # Default configuration
+├── main.py                   # CLI entry point
+├── main_web.py               # Web UI entry point
+├── Dockerfile
+├── docker-compose.yml
+├── entrypoint.sh             # Clones target repo on first start
+└── requirements.txt
+```
+
+---
+
+## Running without Docker
+
+```bash
+pip install -r requirements.txt
+
+# CLI mode (headless)
+python main.py
+
+# Web UI mode
+python main_web.py --port 5001
+
+# Single commit (testing)
+python main.py --once
+```
+
+---
+
+## Token security
+
+The GitHub PAT is stored in the SQLite database (`database/scheduler.db`), never in a file or environment variable at rest. The `database/` directory is excluded from the target repo via `.gitignore`. Tokens are only held in memory during push operations.
+
+---
 
 ## License
 
-MIT License
-
-## Contributing
-
-Contributions welcome! Please open an issue or pull request.
-
-## Support
-
-For issues, questions, or feature requests, please open a GitHub issue.
+MIT

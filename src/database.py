@@ -68,6 +68,15 @@ class Database:
                 )
             """)
 
+            # Settings table for key-value config (tokens, etc.)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_commits_timestamp ON commits(timestamp DESC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_stats_date ON stats(date DESC)")
@@ -328,6 +337,43 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to search commits: {e}")
             return []
+
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Get a setting value by key."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row["value"] if row else default
+        except Exception as e:
+            logger.error(f"Failed to get setting {key}: {e}")
+            return default
+
+    def set_setting(self, key: str, value: str) -> bool:
+        """Upsert a setting value."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            """, (key, value))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set setting {key}: {e}")
+            return False
+
+    def delete_setting(self, key: str) -> bool:
+        """Delete a setting by key."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM settings WHERE key = ?", (key,))
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete setting {key}: {e}")
+            return False
 
     def close(self):
         """Close database connection."""

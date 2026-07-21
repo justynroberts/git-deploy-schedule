@@ -1,6 +1,7 @@
 """Git operations wrapper for managing repository commits."""
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import Optional, List, Tuple
 import git
@@ -68,11 +69,18 @@ class GitOperations:
             Git diff output
         """
         try:
+            cmd = ["git", "diff"]
             if staged:
-                return self.repo.git.diff('--cached')
-            else:
-                return self.repo.git.diff()
-        except GitCommandError as e:
+                cmd.append("--staged")
+
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True
+            )
+            return result.stdout
+        except Exception as e:
             logger.error(f"Failed to get diff: {e}")
             return ""
 
@@ -119,15 +127,36 @@ class GitOperations:
             True if successful, False otherwise
         """
         try:
-            # Set author if provided
-            author = None
-            if author_name and author_email:
-                author = git.Actor(author_name, author_email)
+            # Use subprocess to avoid GitPython pipe issues
+            cmd = ["git", "commit", "-m", message]
 
-            self.repo.index.commit(message, author=author)
-            logger.info(f"Created commit: {message[:50]}...")
-            return True
-        except GitCommandError as e:
+            env = None
+            if author_name and author_email:
+                import os
+                env = os.environ.copy()
+                env["GIT_AUTHOR_NAME"] = author_name
+                env["GIT_AUTHOR_EMAIL"] = author_email
+                env["GIT_COMMITTER_NAME"] = author_name
+                env["GIT_COMMITTER_EMAIL"] = author_email
+
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                env=env
+            )
+
+            if result.returncode == 0:
+                logger.info(f"Created commit: {message[:50]}...")
+                # Refresh repo state
+                self.repo = git.Repo(self.repo_path)
+                return True
+            else:
+                logger.error(f"Failed to commit: {result.stderr}")
+                return False
+
+        except Exception as e:
             logger.error(f"Failed to commit: {e}")
             return False
 
@@ -144,17 +173,70 @@ class GitOperations:
             True if successful, False otherwise
         """
         import time
+        import os
 
         if branch is None:
             branch = self.branch
 
+        def _read_token_from_db():
+            try:
+                import sqlite3 as _sqlite3
+                _db_path = Path("database/scheduler.db")
+                if _db_path.exists():
+                    _conn = _sqlite3.connect(str(_db_path))
+                    _row = _conn.execute(
+                        "SELECT value FROM settings WHERE key = 'github_token'"
+                    ).fetchone()
+                    _conn.close()
+                    return _row[0].strip() if _row else None
+            except Exception:
+                pass
+            return None
+
+        def _write_creds(token):
+            # Refresh credentials file before each attempt so git credential-reject
+            # (triggered on auth failure) can't permanently erase them.
+            try:
+                creds = Path.home() / ".git-credentials"
+                creds.write_text(f"https://x-access-token:{token}@github.com\n")
+                creds.chmod(0o600)
+            except Exception:
+                pass
+
+        git_env = {**__import__("os").environ, "GIT_TERMINAL_PROMPT": "0"}
+
         for attempt in range(retry_attempts):
             try:
-                origin = self.repo.remote(remote)
-                origin.push(branch)
-                logger.info(f"Pushed to {remote}/{branch}")
-                return True
-            except GitCommandError as e:
+                token = _read_token_from_db()
+                if token:
+                    _write_creds(token)
+
+                # Rebase on remote before pushing to avoid non-fast-forward rejection
+                rebase = subprocess.run(
+                    ["git", "pull", "--rebase", remote, branch],
+                    cwd=str(self.repo_path),
+                    capture_output=True,
+                    text=True,
+                    env=git_env,
+                )
+                if rebase.returncode != 0:
+                    logger.warning(f"Rebase failed: {rebase.stderr.strip()}")
+
+                result = subprocess.run(
+                    ["git", "push", remote, branch],
+                    cwd=str(self.repo_path),
+                    capture_output=True,
+                    text=True,
+                    env=git_env,
+                )
+
+                if result.returncode == 0:
+                    logger.info(f"Pushed to {remote}/{branch}")
+                    return True
+                else:
+                    raise Exception(result.stderr)
+
+            except Exception as e:
                 logger.warning(f"Push attempt {attempt + 1}/{retry_attempts} failed: {e}")
                 if attempt < retry_attempts - 1:
                     logger.info(f"Retrying in {retry_delay} seconds...")
@@ -162,11 +244,46 @@ class GitOperations:
                 else:
                     logger.error(f"Failed to push after {retry_attempts} attempts")
                     return False
-            except Exception as e:
-                logger.error(f"Unexpected error during push: {e}")
-                return False
 
         return False
+
+    def get_remote_url(self, remote: str = "origin") -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", remote],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                url = result.stdout.strip()
+                # Strip embedded credentials
+                import re
+                url = re.sub(r'https://[^@]+@', 'https://', url)
+                return url
+            return None
+        except Exception:
+            return None
+
+    def get_last_commit_hash(self) -> Optional[str]:
+        """Get the last commit hash.
+
+        Returns:
+            Last commit hash or None
+        """
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get last commit hash: {e}")
+            return None
 
     def get_last_commit_message(self) -> Optional[str]:
         """Get the last commit message.
@@ -175,7 +292,15 @@ class GitOperations:
             Last commit message or None
         """
         try:
-            return self.repo.head.commit.message.strip()
+            result = subprocess.run(
+                ["git", "log", "-1", "--format=%s"],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            return None
         except Exception as e:
             logger.error(f"Failed to get last commit message: {e}")
             return None

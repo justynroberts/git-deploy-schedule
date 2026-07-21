@@ -174,14 +174,23 @@ async function loadCredentialsStatus() {
         const data = await response.json();
 
         const indicator = document.getElementById('credentials-indicator');
+        if (!indicator) {
+            console.warn('Credentials indicator element not found');
+            return;
+        }
+
         indicator.className = 'status-indicator';
 
         if (data.hasCredentials) {
             indicator.classList.add('has-credentials');
-            indicator.textContent = 'Credentials are stored securely';
+            indicator.textContent = '✓ Credentials are stored securely';
+            indicator.style.display = 'flex';
         } else {
-            indicator.textContent = 'No credentials stored';
+            indicator.textContent = '○ No credentials stored';
+            indicator.style.display = 'flex';
         }
+
+        console.log('Credentials status loaded:', data.hasCredentials ? 'Stored' : 'Not stored');
 
     } catch (error) {
         console.error('Error loading credentials status:', error);
@@ -193,7 +202,18 @@ async function loadConfig() {
         const response = await fetch(`${API_BASE}/api/settings/config`);
         const config = await response.json();
 
-        document.getElementById('ollama-theme').value = config.ollama.theme || '';
+        const theme = config.ollama.theme || '';
+        const predefinedThemes = ['kubernetes', 'docker', 'terraform', 'aws', 'microservices', ''];
+
+        if (predefinedThemes.includes(theme)) {
+            document.getElementById('ollama-theme').value = theme;
+        } else if (theme) {
+            // Custom theme
+            document.getElementById('ollama-theme').value = 'custom';
+            document.getElementById('custom-theme').value = theme;
+            document.getElementById('custom-theme-group').style.display = 'block';
+        }
+
         document.getElementById('base-interval').value = config.schedule.base_interval;
         document.getElementById('jitter-range').value = config.schedule.jitter_range;
         document.getElementById('push-enabled').checked = config.git.push_enabled;
@@ -312,13 +332,32 @@ function showRepositoryStatus(message, type) {
     }, 3000);
 }
 
+// Theme selector handler
+document.getElementById('ollama-theme').addEventListener('change', (e) => {
+    const customThemeGroup = document.getElementById('custom-theme-group');
+    if (e.target.value === 'custom') {
+        customThemeGroup.style.display = 'block';
+    } else {
+        customThemeGroup.style.display = 'none';
+    }
+});
+
 // Config Form
 document.getElementById('config-form').addEventListener('submit', async (e) => {
     e.preventDefault();
 
+    const themeSelector = document.getElementById('ollama-theme').value;
+    let theme;
+
+    if (themeSelector === 'custom') {
+        theme = document.getElementById('custom-theme').value || undefined;
+    } else {
+        theme = themeSelector || undefined;
+    }
+
     const updates = {
         ollama: {
-            theme: document.getElementById('ollama-theme').value || undefined
+            theme: theme
         },
         schedule: {
             base_interval: parseInt(document.getElementById('base-interval').value),

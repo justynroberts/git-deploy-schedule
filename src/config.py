@@ -64,9 +64,9 @@ class Config:
 
         # Logging overrides
         if os.getenv('LOG_LEVEL'):
-            self.config['logging']['level'] = os.getenv('LOG_LEVEL')
+            self.config.setdefault('logging', {})['level'] = os.getenv('LOG_LEVEL')
         if os.getenv('LOG_FILE'):
-            self.config['logging']['file'] = os.getenv('LOG_FILE')
+            self.config.setdefault('logging', {})['file'] = os.getenv('LOG_FILE')
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value by key.

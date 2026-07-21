@@ -262,8 +262,18 @@
                                 <option value="terraform">Terraform</option>
                                 <option value="aws">AWS</option>
                                 <option value="microservices">Microservices</option>
+                                <option value="custom">Custom...</option>
                             </select>
                             <small>Theme influences AI-generated commit messages</small>
+                        </div>
+
+                        <div class="form-group" id="custom-theme-group" style="display: none;">
+                            <label for="custom-theme">
+                                <i class="ph ph-pencil"></i>
+                                Custom Theme
+                            </label>
+                            <input type="text" id="custom-theme" placeholder="e.g., blockchain, IoT, machine learning..." class="form-input">
+                            <small>Enter your own custom theme for commit messages</small>
                         </div>
 
                         <div class="form-group">

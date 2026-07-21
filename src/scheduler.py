@@ -12,6 +12,7 @@ from .git_operations import GitOperations
 from .ollama_client import OllamaClient
 from .message_generator import MessageGenerator
 from .database import Database
+from .file_generator import generate_random_files
 
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,12 @@ class GitScheduler:
             True if commit was successful, False otherwise
         """
         try:
+            # Generate random sample files so there are always changes to commit
+            repo_path = str(self.git_ops.repo_path)
+            count = random.randint(1, 3)
+            generated = generate_random_files(repo_path, count=count)
+            logger.info(f"Generated {len(generated)} sample file(s): {generated}")
+
             # Check if there are changes
             if not self.git_ops.has_changes():
                 logger.info("No changes to commit")
@@ -204,7 +211,7 @@ class GitScheduler:
                 return False
 
             # Get the commit hash
-            commit_hash = self.git_ops.repo.head.commit.hexsha
+            commit_hash = self.git_ops.get_last_commit_hash() or ""
 
             # Push if enabled
             push_success = False

@@ -3,12 +3,36 @@
 
 import sys
 import argparse
+import subprocess
+import time
 from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.scheduler import GitScheduler
+
+
+def ensure_ollama():
+    """Start Ollama if it's not already running (skipped in container environments)."""
+    import os
+    import urllib.request
+    ollama_url = os.getenv("OLLAMA_URL", "http://oracle.local:11434")
+    try:
+        urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=3)
+        print("Ollama: already running")
+    except Exception:
+        if os.getenv("OLLAMA_URL"):
+            print(f"Ollama: not reachable at {ollama_url} (will use template fallback)")
+            return
+        print("Ollama: not running, starting...")
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(2)
+        print("Ollama: started")
 
 
 def main():
@@ -39,6 +63,9 @@ def main():
     args = parser.parse_args()
 
     try:
+        # Ensure Ollama is running for AI commit messages
+        ensure_ollama()
+
         # Initialize scheduler
         scheduler = GitScheduler(config_path=args.config)
 
